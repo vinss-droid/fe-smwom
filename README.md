@@ -17,7 +17,7 @@ Clone the project
 Go to the project directory
 
 ```bash
-  cd fee-smwom
+  cd fe-smwom
 ```
 
 Install dependencies
