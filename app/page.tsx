@@ -1,7 +1,14 @@
-import WorkOrderTable from "@/components/home/WorkOrderTable";
+'use client'
 
-export default function Home() {
+import WorkOrderTable from "@/components/home/WorkOrderTable";
+import withAuthComponent from "@/lib/withAuth";
+import Head from "next/head";
+import {Metadata} from "next";
+
+const Home = ()=>  {
   return <>
-    <WorkOrderTable />
+    <WorkOrderTable/>
   </>
 }
+
+export default withAuthComponent(Home);

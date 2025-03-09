@@ -1,6 +1,4 @@
-'use client'
-
-import React, {SVGProps} from "react";
+import React, {FormEvent, SVGProps} from "react";
 import {
     Table,
     TableHeader,
@@ -19,8 +17,22 @@ import {
     Selection,
     ChipProps,
     SortDescriptor,
+    useDisclosure,
+    Form,
+    DatePicker,
+    Autocomplete,
+    AutocompleteItem,
+    addToast,
+    Select,
+    SelectItem,
+    SharedSelection,
 } from "@heroui/react";
 import { IconPencil } from "@tabler/icons-react";
+import RequestAPI from "@/utils/http";
+import MyModal from "@/components/ui/MyModal";
+import {string} from "postcss-selector-parser";
+import {useSession} from "next-auth/react";
+import {Textarea} from "@heroui/input";
 
 export type IconSvgProps = SVGProps<SVGSVGElement> & {
     size?: number;
@@ -131,16 +143,17 @@ export const ChevronDownIcon = ({strokeWidth = 1.5, ...otherProps}: IconSvgProps
 };
 
 export const columns = [
-    {name: "ID", uid: "id", sortable: true},
-    {name: "WORK ORDER NUMBER", uid: "work_order_number", sortable: true},
-    {name: "PRODUCT NAME", uid: "product_name", sortable: true},
-    {name: "QUANTITY", uid: "quantity", sortable: true},
-    {name: "DEADLINE", uid: "deadline"},
-    {name: "STATUS", uid: "status", sortable: true},
-    {name: "OPERATOR", uid: "operator", sortable: true},
-    {name: "QTY IN PROGRESS", uid: "quantity_in_progress", sortable: true},
-    {name: "QTY COMPLETED", uid: "quantity_completed", sortable: true},
-    {name: "ACTIONS", uid: "actions"},
+    { name: "ID", uid: "id", sortable: true },
+    { name: "WORK ORDER NUMBER", uid: "work_order_number", sortable: true },
+    { name: "PRODUCT NAME", uid: "product_name", sortable: true },
+    { name: "QUANTITY", uid: "quantity", sortable: true },
+    { name: "DEADLINE", uid: "deadline", sortable: true },
+    { name: "STATUS", uid: "status", sortable: true },
+    { name: "OPERATOR", uid: "operator", sortable: true },
+    { name: "QTY IN PROGRESS", uid: "quantity_in_progress", sortable: true },
+    { name: "NOTES IN PROGRESS", uid: "notes_in_progress", sortable: true },
+    { name: "QTY COMPLETED", uid: "quantity_completed", sortable: true },
+    { name: "ACTIONS", uid: "actions" },
 ];
 
 export const statusOptions = [
@@ -162,23 +175,51 @@ export const data = [
             "id": 2,
             "name": "Operator 1"
         },
+        progress: [
+            {
+                id: 1,
+                work_order_id: 1,
+                status: "In Progress",
+                quantity: 78,
+                notes: null,
+                created_at: "2025-03-08T14:40:44.000000Z",
+                updated_at: "2025-03-08T14:40:44.000000Z"
+            }
+        ]
     },
 ];
 
 const statusColorMap: Record<string, ChipProps["color"]> = {
-    active: "success",
-    paused: "danger",
-    vacation: "warning",
+    "In Progress": "warning",
+    "Completed": "success",
+    "Canceled": "danger",
 };
 
 type Data = (typeof data)[0];
 
+interface Operator {
+    id: number;
+    name: string;
+}
+
+interface DataEdit {
+    id: number;
+    woID: string;
+    opId: number;
+    status?: string;
+    quantity?: number
+}
+
+type Status = "In Progress" | "Completed" | "Canceled";
+
 export default function WorkOrderTable() {
+    const { data: session } = useSession();
+    const user = session?.user;
+    const isProductionManager = user?.role === 'Production Manager'
+
     const [filterValue, setFilterValue] = React.useState("");
     const [selectedKeys, setSelectedKeys] = React.useState<Selection>(new Set([]));
-    // const [visibleColumns, setVisibleColumns] = React.useState<Selection>(
-    //     new Set(INITIAL_VISIBLE_COLUMNS),
-    // );
+    const [dataWorkOrder, setDataWorkOrder] = React.useState<Data[]>([]);
     const [statusFilter, setStatusFilter] = React.useState<Selection>("all");
     const [rowsPerPage, setRowsPerPage] = React.useState(5);
     const [sortDescriptor, setSortDescriptor] = React.useState<SortDescriptor>({
@@ -187,11 +228,18 @@ export default function WorkOrderTable() {
     });
 
     const [page, setPage] = React.useState(1);
+    const [operator, setOperator] = React.useState<Operator[]>([])
+    const [selectedOperatorId, setSelectedOperatorId] = React.useState<number | null>(null);
+    const [isLoading, setIsLoading] = React.useState<boolean>(false)
+    const [dataEdit, setDataEdit] = React.useState<DataEdit>()
+    const [selectedStatus, setSelectedStatus] = React.useState<Status>();
 
+    const modalAdd = useDisclosure()
+    const modalEdit = useDisclosure()
     const hasSearchFilter = Boolean(filterValue);
 
     const filteredItems = React.useMemo(() => {
-        let filteredDatas = [...data];
+        let filteredDatas = [...dataWorkOrder];
 
         if (hasSearchFilter) {
             filteredDatas = filteredDatas.filter((data) =>
@@ -205,7 +253,7 @@ export default function WorkOrderTable() {
         }
 
         return filteredDatas;
-    }, [data, filterValue, statusFilter]);
+    }, [dataWorkOrder, filterValue, statusFilter]);
 
     const pages = Math.ceil(filteredItems.length / rowsPerPage);
 
@@ -226,23 +274,48 @@ export default function WorkOrderTable() {
         });
     }, [sortDescriptor, items]);
 
-    const renderCell = React.useCallback((data: Data, columnKey: React.Key) => {
-        const cellValue = data[columnKey as keyof Data];
+    const renderCell = React.useCallback((dataWorkOrder: Data, columnKey: React.Key) => {
+        const cellValue = dataWorkOrder[columnKey as keyof Data];
+        const inProgressData = dataWorkOrder.progress.find(item => item.status === "In Progress");
+        const completedData = dataWorkOrder.progress.find(item => item.status === "Completed");
 
         switch (columnKey) {
             case "operator":
                 return (
-                    <span>{data.assigned_operator.name}</span>
-                )
+                    <span>{dataWorkOrder.assigned_operator.name}</span>
+                );
+            case "quantity_in_progress":
+                return (
+                    <span>{inProgressData ? inProgressData.quantity : 0}</span>
+                );
+            case "notes_in_progress":
+                return (
+                    <span>{inProgressData ? (inProgressData.notes === null ? "N/A" : inProgressData.notes) : "N/A"}</span>
+                );
+            case "quantity_completed":
+                return (
+                    <span>{completedData ? completedData.quantity : 0}</span>
+                );
             case "status":
                 return (
-                    <Chip className="capitalize" color={statusColorMap[data.status]} size="sm" variant="flat">
-                        {data.status}
+                    <Chip className="capitalize" color={statusColorMap[dataWorkOrder.status]} size="sm" variant="flat">
+                        {dataWorkOrder.status}
                     </Chip>
                 );
             case "actions":
                 return (
-                    <Button variant="flat" color="warning" isIconOnly>
+                    <Button
+                        isDisabled={dataWorkOrder.status === "Completed"}
+                        onPress={() => {
+                            setDataEdit({
+                                id: dataWorkOrder.id,
+                                woID: dataWorkOrder.work_order_number,
+                                opId: dataWorkOrder.assigned_operator.id,
+                                quantity: dataWorkOrder.quantity,
+                            });
+                            modalEdit.onOpen()
+                        }}
+                        variant="flat" color="warning" isIconOnly key={dataWorkOrder.id}>
                         <IconPencil />
                     </Button>
                 );
@@ -318,19 +391,22 @@ export default function WorkOrderTable() {
                                     ))}
                                 </DropdownMenu>
                             </Dropdown>
-                            <Button color="primary" endContent={<PlusIcon />}>
-                                Add New
-                            </Button>
+                            {isProductionManager && (
+                                <Button isLoading={isLoading} color="primary" onPress={modalAdd.onOpen} endContent={<PlusIcon />}>
+                                    Add New
+                                </Button>
+                            )}
                         </div>
                     </div>
                     <div className="flex justify-between items-center">
-                        <span className="text-default-400 text-small">Total {data.length} data</span>
+                        <span className="text-default-400 text-small">Total {dataWorkOrder.length} data</span>
                         <label className="flex items-center text-default-400 text-small">
                             Rows per page:
                             <select
                                 className="bg-transparent outline-none text-default-400 text-small"
                                 onChange={onRowsPerPageChange}
                             >
+                                <option value="5">5</option>
                                 <option value="10">10</option>
                                 <option value="15">15</option>
                             </select>
@@ -344,7 +420,7 @@ export default function WorkOrderTable() {
         statusFilter,
         onSearchChange,
         onRowsPerPageChange,
-        data.length,
+        dataWorkOrder.length,
         hasSearchFilter,
     ]);
 
@@ -372,7 +448,197 @@ export default function WorkOrderTable() {
         );
     }, [selectedKeys, items.length, page, pages, hasSearchFilter]);
 
-    return (
+    const fetchDataWorkOrder = async () => {
+        try {
+            const response = await RequestAPI('/work-order', 'get');
+            if (response && response.work_orders) {
+                setDataWorkOrder(response.work_orders);
+            } else {
+                console.error("Unexpected response structure:", response);
+            }
+        } catch (error) {
+            console.error("Error fetching work orders:", error);
+            const errorMessage = error instanceof Error ? error.message : "Error while getting the work order";
+            addToast({
+                title: "Error",
+                description: errorMessage,
+                timeout: 3000,
+                shouldShowTimeoutProgress: true,
+                color: "danger",
+            });
+        }
+    };
+
+    const fetchDataOperators = async () => {
+        try {
+            const response = await RequestAPI('/operators', 'get');
+            if (response && response.operators) {
+                setOperator(response.operators);
+            } else {
+                console.error("Unexpected response structure:", response);
+            }
+        } catch (error) {
+            console.error("Error fetching work orders:", error);
+        }
+    };
+
+    const handleAddWorkOrder = async (event: FormEvent<HTMLFormElement>) => {
+        event.preventDefault();
+        setIsLoading(true)
+
+        const formData = new FormData(event.currentTarget);
+
+        if (selectedOperatorId !== null) {
+            formData.append('assigned_operator_id', selectedOperatorId.toString());
+        }
+
+        try {
+            const response = await RequestAPI('/work-order', 'post', formData);
+            if (response && response.status === 'success') {
+                fetchDataWorkOrder();
+                modalAdd.onClose()
+                addToast({
+                    title: "Success",
+                    description: "Successfully added the work order",
+                    timeout: 3000,
+                    shouldShowTimeoutProgress: true,
+                    color: "success",
+                });
+            } else {
+                addToast({
+                    title: "Error",
+                    description: "Error while adding the work order",
+                    timeout: 3000,
+                    shouldShowTimeoutProgress: true,
+                    color: "danger",
+                });
+                console.error("Unexpected response structure:", response);
+            }
+        } catch (error) {
+            console.error("Error saving work order:", error);
+            const errorMessage = error instanceof Error ? error.message : "Error while adding the work order";
+            addToast({
+                title: "Error",
+                description: errorMessage,
+                timeout: 3000,
+                shouldShowTimeoutProgress: true,
+                color: "danger",
+            });
+        }
+        setIsLoading(false);
+    };
+
+    const handleUpdateWorkOrder = async (event: FormEvent<HTMLFormElement>) => {
+        event.preventDefault();
+        setIsLoading(true)
+
+        const formData = new FormData(event.currentTarget);
+
+        const status = formData.get('status');
+
+        if (status === "" || status === undefined) {
+            formData.delete('status');
+        }
+
+        if (selectedOperatorId !== null) {
+            formData.append('assigned_operator_id', selectedOperatorId.toString());
+        }
+
+        try {
+            const response = await RequestAPI(`/work-order/${dataEdit?.id}`, 'patch', formData);
+            if (response && response.status === 'success') {
+                fetchDataWorkOrder();
+                modalEdit.onClose()
+                addToast({
+                    title: "Success",
+                    description: "Successfully update the work order",
+                    timeout: 3000,
+                    shouldShowTimeoutProgress: true,
+                    color: "success",
+                });
+            } else {
+                addToast({
+                    title: "Error",
+                    description: "Error while updating the work order",
+                    timeout: 3000,
+                    shouldShowTimeoutProgress: true,
+                    color: "danger",
+                });
+                console.error("Unexpected response structure:", response);
+            }
+        } catch (error) {
+            console.error("Error saving work order:", error);
+            const errorMessage = error instanceof Error ? error.message : "Error while updating the work order";
+            addToast({
+                title: "Error",
+                description: errorMessage,
+                timeout: 3000,
+                shouldShowTimeoutProgress: true,
+                color: "danger",
+            });
+        }
+        setIsLoading(false);
+    };
+
+    const handleUpdateWorkOrderForOperator = async (event: FormEvent<HTMLFormElement>) => {
+        event.preventDefault();
+        setIsLoading(true)
+
+        const formData = new FormData(event.currentTarget);
+
+        if (dataEdit?.id) {
+            formData.append('work_order_id', dataEdit.id.toString());
+        }
+
+        try {
+            const response = await RequestAPI(`/progress/work-order/`, 'post', formData);
+            if (response && response.status === 'success') {
+                fetchDataWorkOrder();
+                modalEdit.onClose()
+                addToast({
+                    title: "Success",
+                    description: "Successfully update the work order",
+                    timeout: 3000,
+                    shouldShowTimeoutProgress: true,
+                    color: "success",
+                });
+            } else {
+                addToast({
+                    title: "Error",
+                    description: "Error while updating the work order",
+                    timeout: 3000,
+                    shouldShowTimeoutProgress: true,
+                    color: "danger",
+                });
+                console.error("Unexpected response structure:", response);
+            }
+        } catch (error) {
+            console.error("Error saving work order:", error);
+            const errorMessage = error instanceof Error ? error.message : "Error while updating the work order";
+            addToast({
+                title: "Error",
+                description: errorMessage,
+                timeout: 3000,
+                shouldShowTimeoutProgress: true,
+                color: "danger",
+            });
+        }
+        setIsLoading(false);
+    };
+
+    const handleSelectionChange = (keys: SharedSelection) => {
+        const value = keys.currentKey as Status;
+        setSelectedStatus(value);
+    };
+
+    React.useEffect(() => {
+        fetchDataWorkOrder();
+        if (isProductionManager) {
+            fetchDataOperators();
+        }
+    }, []);
+
+    return <>
         <Table
             isHeaderSticky
             aria-label="Example table with custom cells, pagination and sorting"
@@ -408,5 +674,102 @@ export default function WorkOrderTable() {
                 )}
             </TableBody>
         </Table>
-    );
+        <MyModal title="Add Work Order" isOpen={modalAdd.isOpen} onOpen={modalAdd.onOpen} onOpenChange={modalAdd.onOpenChange}>
+            <Form className="w-full px-2" validationBehavior="aria" onSubmit={handleAddWorkOrder}>
+                <Input
+                    isRequired
+                    label="Product Name"
+                    labelPlacement="inside"
+                    name="product_name"
+                    placeholder="Enter product name"
+                    type="text"
+                />
+
+                <Input
+                    isRequired
+                    label="Quantity Order"
+                    labelPlacement="inside"
+                    name="quantity"
+                    placeholder="Enter quantity order"
+                    type="number"
+                />
+
+                <DatePicker label="Deadline" name="deadline" isRequired/>
+
+                <Autocomplete
+                    isRequired
+                    defaultItems={operator}
+                    label="Operator"
+                    placeholder="Search operator"
+                    onSelectionChange={(key) => {
+                        setSelectedOperatorId(key as number);
+                    }}
+                >
+                    {operator.map((user) => (
+                        <AutocompleteItem key={user.id}>{user.name}</AutocompleteItem>
+                    ))}
+                </Autocomplete>
+
+                <Button isLoading={isLoading} type="submit" color="primary" variant="solid" className="my-5 w-full">
+                    Submit
+                </Button>
+            </Form>
+        </MyModal>
+
+        <MyModal title={`Edit ${dataEdit?.woID}`} isOpen={modalEdit.isOpen} onOpen={modalEdit.onOpen} onOpenChange={modalEdit.onOpenChange}>
+            <Form className="w-full px-2" validationBehavior="aria" onSubmit={isProductionManager ? handleUpdateWorkOrder : handleUpdateWorkOrderForOperator}>
+                <Select isRequired={!isProductionManager} label="Status Work Order" placeholder="Select status" name="status" onSelectionChange={handleSelectionChange}>
+                    {isProductionManager ? (
+                        <SelectItem key="Canceled">Canceled</SelectItem>
+                    ) : null}
+
+                    {dataEdit?.status === 'In Progress' ? (
+                        <SelectItem key="Completed">Completed</SelectItem>
+                    ) : <>
+                        <SelectItem key="In Progress">In Progress</SelectItem>
+                        <SelectItem key="Completed">Completed</SelectItem>
+                    </>}
+                </Select>
+
+                {selectedStatus === 'In Progress' && (
+                    <Textarea
+                        label="Notes"
+                        labelPlacement="inside"
+                        placeholder="Enter your notes"
+                        name="notes"
+                    />
+                )}
+
+                <Input
+                    isRequired
+                    label="Quantity Order"
+                    labelPlacement="inside"
+                    name="quantity"
+                    placeholder="Enter quantity order"
+                    type="number"
+                    max={dataEdit?.quantity}
+                />
+
+                {isProductionManager && (
+                    <Autocomplete
+                        defaultItems={operator}
+                        label="Operator"
+                        placeholder="Search operator"
+                        defaultSelectedKey={dataEdit?.opId}
+                        onSelectionChange={(key) => {
+                            setSelectedOperatorId(key as number);
+                        }}
+                    >
+                        {operator.map((user) => (
+                            <AutocompleteItem key={user.id}>{user.name}</AutocompleteItem>
+                        ))}
+                    </Autocomplete>
+                )}
+
+                <Button isLoading={isLoading} type="submit" color="primary" variant="solid" className="my-5 w-full">
+                    Submit
+                </Button>
+            </Form>
+        </MyModal>
+    </>
 }
