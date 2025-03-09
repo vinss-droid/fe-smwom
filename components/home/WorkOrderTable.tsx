@@ -276,13 +276,14 @@ export default function WorkOrderTable() {
 
     const renderCell = React.useCallback((dataWorkOrder: Data, columnKey: React.Key) => {
         const cellValue = dataWorkOrder[columnKey as keyof Data];
-        const inProgressData = dataWorkOrder.progress.find(item => item.status === "In Progress");
-        const completedData = dataWorkOrder.progress.find(item => item.status === "Completed");
+        const inProgressData = dataWorkOrder.progress?.find(item => item.status === "In Progress");
+        const completedData = dataWorkOrder.progress?.find(item => item.status === "Completed");
 
         switch (columnKey) {
             case "operator":
+                // Check if assigned_operator exists and has a name
                 return (
-                    <span>{dataWorkOrder.assigned_operator.name}</span>
+                    <span>{dataWorkOrder.assigned_operator?.name || "N/A"}</span>
                 );
             case "quantity_in_progress":
                 return (
@@ -290,7 +291,7 @@ export default function WorkOrderTable() {
                 );
             case "notes_in_progress":
                 return (
-                    <span>{inProgressData ? (inProgressData.notes === null ? "N/A" : inProgressData.notes) : "N/A"}</span>
+                    <span>{inProgressData ? (inProgressData.notes ?? "N/A") : "N/A"}</span>
                 );
             case "quantity_completed":
                 return (
@@ -310,17 +311,17 @@ export default function WorkOrderTable() {
                             setDataEdit({
                                 id: dataWorkOrder.id,
                                 woID: dataWorkOrder.work_order_number,
-                                opId: dataWorkOrder.assigned_operator.id,
+                                opId: dataWorkOrder.assigned_operator?.id,
                                 quantity: dataWorkOrder.quantity,
                             });
-                            modalEdit.onOpen()
+                            modalEdit.onOpen();
                         }}
-                        variant="flat" color="warning" isIconOnly key={dataWorkOrder.id}>
+                        variant="flat" color="warning" isIconOnly>
                         <IconPencil />
                     </Button>
                 );
             default:
-                return cellValue;
+                return <span>cellValue</span>
         }
     }, []);
 
@@ -669,7 +670,11 @@ export default function WorkOrderTable() {
             <TableBody emptyContent={"No data found"} items={sortedItems}>
                 {(item) => (
                     <TableRow key={item.id}>
-                        {(columnKey) => <TableCell>{renderCell(item, columnKey)}</TableCell>}
+                        {(columnKey) => (
+                            <TableCell>
+                                {renderCell(item, columnKey)}
+                            </TableCell>
+                        )}
                     </TableRow>
                 )}
             </TableBody>
