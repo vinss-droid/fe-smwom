@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@heroui/react": "^2.7.5",
+    "@tabler/icons-react": "^3.31.0",
     "autoprefixer": "^10.4.20",
     "framer-motion": "^12.4.10",
     "next": "15.2.1",
